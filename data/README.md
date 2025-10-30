@@ -38,7 +38,7 @@ Each rated on 7-point scale:
 - CL5: Used in last week
 - CL6: Used in last day
 
-Substances: Alcohol, Amphetamines, Amyl Nitrite, Benzodiazepines, Caffeine, Cannabis, Chocolate (control), Cocaine, Crack, Ecstasy, Heroin, Ketamine, Legal Highs, LSD, Methadone, Mushrooms, Nicotine, VSA
+**Substances:** Alcohol, Amphetamines, Amyl Nitrite, Benzodiazepines, Caffeine, Cannabis, Chocolate (control), Cocaine, Crack, Ecstasy, Heroin, Ketamine, Legal Highs, LSD, Methadone, Mushrooms, Nicotine, VSA
 
 ## Usage in Analysis
 
