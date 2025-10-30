@@ -6,8 +6,9 @@ Ensemble regression model predicting drug use risk from personality traits and b
 [![R](https://img.shields.io/badge/R-4.0+-blue.svg)](https://www.r-project.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[Video Presentation](https://youtu.be/GkFWRQEywSI) | [Model Card](docs/MODEL_CARD.md) | [Full Analysis](analysis/McCrayV.DA5030.Project.html)
+[Video Presentation](https://youtu.be/GkFWRQEywSI)
 
+**Course:** Data Mining & Machine Learning, Northeastern University
 
 ## Overview
 
