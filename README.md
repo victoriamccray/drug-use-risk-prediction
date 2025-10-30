@@ -106,7 +106,7 @@ Fehrman, E., et al. (2017). The Five Factor Model of personality and evaluation 
 MSc Bioinformatics Candidate, Northeastern University  
 Health Data Scientist, Guidehouse
 
-[LinkedIn](https://linkedin.com/in/victoria-mccray) | victoriapmccray@gmail.com
+[LinkedIn](https://linkedin.com/in/victoria-mccray-99399514a) | victoriapmccray@gmail.com
 
 ## License
 
