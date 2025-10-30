@@ -8,7 +8,7 @@ output:
   pdf_document: default
 ---
 
-## Business Understanding
+## Problem Understanding
 
 The paper The Five Factor Model of personality and evaluation of drug consumption risk by [Fehrman et al. 2015](https://arxiv.org/abs/1506.06297).
 
@@ -810,3 +810,4 @@ If validated, this model may be deployed as a decision-support tool for healthca
 -   **Expand Training Data**: Incorporating more diverse and recent datasets—especially those reflecting underrepresented populations considering the skews present in the data—could improve generalizability and reduce bias.
 -   **Model Tuning**: Hyperparameter optimization and testing alternative model architectures (e.g., ensemble methods, neural networks) may yield better performance.
 -   **Evaluating Bias**: Models that can handle protected class status for reducing biases may be helpful for improvement; such as the fairlearn in Python.
+
