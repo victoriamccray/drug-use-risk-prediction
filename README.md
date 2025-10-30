@@ -2,6 +2,13 @@
 
 Ensemble regression model predicting drug use risk from personality traits and behavioral factors.
 
+
+[![R](https://img.shields.io/badge/R-4.0+-blue.svg)](https://www.r-project.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+[Video Presentation](https://youtu.be/GkFWRQEywSI) | [Model Card](docs/MODEL_CARD.md) | [Full Analysis](analysis/McCrayV.DA5030.Project.html)
+
+
 ## Overview
 
 This project develops a continuous risk scoring system for substance use based on the Big Five personality traits and demographic factors. Using ensemble methods (Random Forest + Gradient Boosting), the model achieves strong predictive performance (R² = 0.991, RMSE = 0.103).
@@ -84,7 +91,7 @@ rmarkdown::render("analysis/PredictingDrugUseEnsemble.Rmd")
   title={Ensemble Regression for Substance Use Risk Prediction},
   author={McCray, Victoria P.},
   year={2025},
-  url={https://github.com/yourusername/drug-use-risk-prediction}
+  url={https://github.com/victoriamccray/drug-use-risk-prediction}
 }
 ```
 
