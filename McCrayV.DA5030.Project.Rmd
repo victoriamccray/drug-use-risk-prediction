@@ -1,0 +1,812 @@
+---
+title: "Predicting Drug Use Risk by Personality and Recency"
+author: "McCray, Victoria"
+date: "Spring 2025"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+## Business Understanding
+
+The paper The Five Factor Model of personality and evaluation of drug consumption risk by [Fehrman et al. 2015](https://arxiv.org/abs/1506.06297).
+
+For my project, I am using the Drug Consumption (Quantified) dataset from the UCI Machine Learning Repository. This dataset contains 1,885 observations and 32 numerical features, including self-reported personality traits, demographics, and substance use history across multiple drugs.
+
+My goal is to develop a continuous risk score for substance use by predicting the recency of drug use using regression. The dataset classifies drug use in ordinal categories (CL0 to CL6), where higher values indicate more recent use. I will convert this into a numerical risk score and explore weighting based on drug severity and co-usage correlations.
+
+I plan to implement an ensemble regression model, using:
+
+Random Forest Regression to capture non-linear relationships. Gradient Boosting Regression (GBR) for improved predictive performance. Since the dataset is fully numeric, no categorical encoding is needed. However, I will ordinally encode the recency variable and apply scaling (Min-Max or Z-score) to standardize features. To test model robustness, I will simulate missing values (\<5%) and handle them accordingly. For \>5% missing values, I may use mean or median imputation instead of removal.
+
+The dataset's sample size (1,885 observations) should provide enough statistical power for the regression models. Additionally, I will explore using cross-validation (e.g., k-fold cross-validation) to assess model performance, considering the ensemble approach.
+
+Model performance will be evaluated using R-squared, RMSE, and MAE. While prior research has used this dataset for classification, few studies have predicted a continuous risk score based on recency of drug use. My approach introduces a novel perspective by shifting from classification to regression.
+
+I will use cross-validation to ensure model reliability and adjust for potential biases in feature scaling and sample representation. I will check regression assumptions like linearity, independence, and multicollinearity using correlation matrices, VIF, and residual plots.
+
+[Drug Consumption (Quantified) - UCI ML Repository](https://archive.ics.uci.edu/dataset/373/drug+consumption+quantified)
+
+References
+
+Fehrman, E., Muhammad, A. K., Mirkes, E. M., Egan, V., & Gorban, A. N. (2017). The five factor model of personality and evaluation of drug consumption risk. In Data science: innovative developments in data analysis and clustering (pp. 231-242). Springer International Publishing. <https://arxiv.org/abs/1506.06297>
+
+## Data Understanding
+
+Each drug (like alcohol, cannabis, heroin, etc.) has its own column, with values from:
+
+-   CL0: Never used
+
+-   CL1: Used over a decade ago
+
+-   CL2: Used in last decade
+
+-   CL3: Used in last year
+
+-   CL4: Used in last month
+
+-   CL5: Used in last week
+
+-   CL6: Used in last day
+
+These ordinal values reflect recency and frequency of use.
+
+```{r installPackages, warning=FALSE}
+
+# install packages if needed before loading
+#install.packages("gridExtra")
+#install.packages("h2o")
+#install.packages("xgboost")
+#install.packages("caretEnsemble")
+```
+
+```{r loadPackages, warning=FALSE, message=FALSE}
+
+# Load necessary libraries
+library(caret)       # For modeling & evaluation
+library(randomForest) # Random Forest Regression
+library(gbm)         # Gradient Boosting Regression
+library(car)         # For VIF (multicollinearity check)
+library(ggplot2)  # data visualization
+library(psych)  # for correlation matrix and visualization
+library(gridExtra) # output formatting
+library(h2o)         # performing dimension reduction
+library(xgboost)         # gradient boost for ensemble models
+library(caretEnsemble) # ensemble methods
+```
+
+```{r loadDataset}
+
+url <- "https://archive.ics.uci.edu/static/public/373/data.csv"
+
+df <- read.csv(url, header = TRUE)
+prime_df <- df # make a copy of the original dataset
+```
+
+```{r inspectSummaryStats}
+# Preliminary data exploration
+str(df)       # Check structure
+summary(df)   # Summary statistics
+sum(is.na(df)) # Check for missing values
+```
+
+I have conducted preliminary analysis in R, confirming no missing values and identifying skewness in age and ethnic representation (78% age 18-44 and 91.25% White).
+
+### Visualize Distributions
+
+For my inspection of the feature distributions, I am looking for the following:
+
+-   Detect skewness and outliers that might impact model assumptions and performance. For example, drug usage variables often exhibit right skew due to many participants reporting non-use.
+
+-   Assess the approximate normality of personality and demographic features, which may inform the choice of scaling techniques (e.g., Z-score normalization vs. Min-Max scaling).
+
+```{r formatPlotsGrid, fig.width=9, fig.height=9, warning=FALSE}
+
+# Check the distribution for columns that are numeric, excluding "id"
+numeric_vars <- setdiff(names(df)[sapply(df, is.numeric)], "id")
+
+### grid formatting adapted from https://cran.r-project.org/web/packages/egg/vignettes/Ecosystem.html
+
+# Create a list of ggplot objects
+plot_list <- lapply(numeric_vars, function(col) {
+  ggplot(df, aes_string(x = col)) + 
+    geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+    theme_minimal() + 
+    ggtitle(paste("Distribution of", col))
+})
+
+# Number of plots per page (adjust based on your PDF/page size)
+plots_per_page <- 6
+pages <- split(plot_list, ceiling(seq_along(plot_list) / plots_per_page))
+
+# Display plots in a grid, 2 columns by 3 rows per page
+for (page in pages) {
+  do.call(grid.arrange, c(page, ncol = 3, nrow = 2))
+}
+```
+
+The bar charts indicate that most of the personality traits follow a normal distribution. The distributions for some of the drug usage features show skew towards non-usage (particularly substances with higher risk or severity such as crack, coke, and heroin).
+
+### Identify Outliers
+
+Boxplots are visualizations used to identify outliers by showing the spread of the data, and data points outside the interquartile ranged are potential outliers. Because regression is sensitive to outliers, these are inspected.
+
+```{r createBoxPlots, fig.width=9, fig.height=9, warning=FALSE}
+
+# Check for columns that are numeric, excluding "id"
+numeric_vars <- setdiff(names(df)[sapply(df, is.numeric)], "id")
+
+### grid formatting adapted from https://cran.r-project.org/web/packages/egg/vignettes/Ecosystem.html
+
+# Create a list of ggplot objects for boxplots
+plot_list <- lapply(numeric_vars, function(col) {
+  ggplot(df, aes_string(y = col)) + 
+    geom_boxplot(fill = "lightgrey", color = "steelblue") +
+    theme_minimal() + 
+    ggtitle(paste("Boxplot of", col)) +
+    theme(axis.title.x = element_blank()) # Remove x-axis label for cleaner plot
+})
+
+# Number of plots per page (adjust based on your PDF/page size)
+plots_per_page <- 6
+pages <- split(plot_list, ceiling(seq_along(plot_list) / plots_per_page))
+
+# Display plots in a grid, 2 columns by 3 rows per page
+for (page in pages) {
+  do.call(grid.arrange, c(page, ncol = 3, nrow = 2))
+}
+
+
+```
+
+The loop is creating boxplots for each numeric variable in the dataframe. When we observe values like 3 or -3, those are possible outliers (values more than \~3 standard deviations from the mean).
+
+Some personality trait variables, such as cscore, ascore, and oscore, show values approaching or exceeding ±3, which suggests the presence of a few extreme responders. These scores represent individuals who are several standard deviations away from the mean, indicating unusually high or low levels of the trait.
+
+### Simulate Missing Data
+
+The simulated approach introduces null values to cells. It is agnostic to column type or names. However, it can also introduce null values to non-numeric columns.
+
+This approach samples across the entire dataset, including character or factor columns. If needed, one can filter only numeric columns before sampling to simulate Missing Completely at Random (MCAR) in a more controlled way. MCAR indicates the probability of a value being missing is completely unrelated to any observed or unobserved data.
+
+```{r simulateNullValues}
+
+# approach adapted from http://artificium.us/lessons/03.ml/l-3-204-missing-values/l-3-204.html
+
+set.seed(123)  # for reproducibility
+
+# Make a copy so original is preserved
+sim_data <- df
+
+# Get total number of cells
+total_cells <- prod(dim(sim_data))
+
+# Calculate how many to make NA
+missing_rate <- 0.05
+n_missing <- floor(missing_rate * total_cells)
+
+# Sample from all cells in row-major order
+missing_positions <- sample(total_cells, n_missing, replace = FALSE)
+
+# Convert to (row, col) index positions
+missing_indices <- arrayInd(missing_positions, .dim = dim(sim_data))
+
+# Set each selected cell to NA
+for (i in seq_len(n_missing)) {
+  sim_data[missing_indices[i, 1], missing_indices[i, 2]] <- NA
+}
+
+# Option to restrict to numeric columns if needed
+numeric_idx <- which(sapply(sim_data, is.numeric))
+selected_positions <- arrayInd(sample(prod(dim(sim_data[, numeric_idx])), n_missing), .dim = dim(sim_data[, numeric_idx]))
+
+# reassign to df label
+df <- sim_data
+
+
+```
+
+### Correlation Analysis
+
+```{r defineDrugFeatures}
+# capture all the features related to drug use and the chocolate control field
+drug_features <- c("alcohol","amphet","amyl","benzos","caff","cannabis","choc","coke","crack","ecstasy","heroin","ketamine","legalh","lsd","meth","mushrooms","nicotine")
+
+```
+
+### Ordinal Encoding
+
+Ordinal encoding is one of the most important steps for this algorithm because it applies the mappings of recency/frequency for drug usage to all the drug features.
+
+Ordinal encoding is helpful before conducting the correlational analysis.
+
+```{r ordinalEncode}
+
+# list drug usage features
+drug_features <- c("alcohol","amphet","amyl","benzos","caff","cannabis","choc","coke","crack","ecstasy","heroin","ketamine","legalh","lsd","meth","mushrooms","nicotine")
+
+# apply as numerical factor to each of the categories
+for (drug in drug_features) {
+  df[[drug]] <- as.numeric(factor(df[[drug]], levels = c("CL0", "CL1", "CL2", "CL3", "CL4", "CL5", "CL6")))
+}
+
+head(df)
+```
+
+```{r corrAnalysis}
+
+# Subset personality traits and drug use
+personality_vars <- c("nscore", "escore", "oscore", "ascore", "cscore")
+personality_vars_df <- df[, personality_vars]
+
+drug_vars_df <- df[, drug_features]
+
+# Combine for correlation
+corr_data <- cbind(personality_vars_df, drug_vars_df)
+
+# Compute correlation matrix with significance
+cor_results <- corr.test(corr_data)
+
+```
+
+The algorithm ran a correlation matrix between Big Five personality traits and drug use variables.
+
+| Personality Trait | Meaning                             |
+|-------------------|-------------------------------------|
+| nscore            | Neuroticism (emotional instability) |
+| escore            | Extraversion                        |
+| oscore            | Openness to Experience              |
+| ascore            | Agreeableness                       |
+| cscore            | Conscientiousness                   |
+
+```{r corrTable}
+
+# Compute correlation matrix with p-values
+cor_results <- corr.test(corr_data)
+
+# Extract correlations and p-values
+r <- cor_results$r
+p <- cor_results$p
+
+# Get the upper triangle indices (excluding diagonal)
+upper_idx <- which(upper.tri(p), arr.ind = TRUE)
+
+# Filter for significant correlations
+sig_idx <- upper_idx[p[upper_idx] < 0.05]
+
+# Get variable names
+vars <- colnames(p)
+
+# Create result table
+sig_results <- data.frame(
+  Var1 = vars[upper_idx[, 1]][p[upper_idx] < 0.05],
+  Var2 = vars[upper_idx[, 2]][p[upper_idx] < 0.05],
+  Correlation = r[upper_idx][p[upper_idx] < 0.05],
+  P_value = p[upper_idx][p[upper_idx] < 0.05]
+)
+
+# Sort by p-value
+sig_results <- sig_results[order(sig_results$P_value), ]
+
+# Show result
+print(sig_results)
+
+```
+
+The correlation table shows that there are `r nrow(sig_results)` significantly correlated relationships between features, especially where drug usage variables are correlated with one another.
+
+For example, `lsd` and `mushrooms` usage show the most statistically significant and the strongest correlation (at `r sig_results$Correlation[1]`), likely because they are both psychedelics.
+
+Nicotine is more weakly correlated with other variables.
+
+```{r visualizeCorrelation, fig.width=12, fig.height=10, warning=FALSE}
+
+# Get just the correlation matrix from your previous results
+corr_matrix <- cor_results$r
+# Plot the correlation heatmap
+corPlot(cor_results$r,
+        numbers = TRUE,   # show correlation coefficients
+        upper = FALSE,    # show lower triangle only
+        main = "Correlation Heatmap",
+        cex = 0.7)        # adjust text size
+```
+
+Openness to Experience was consistently associated with increased usage of cannabis, ecstasy, and cocaine. Conversely, Agreeableness and Conscientiousness were negatively associated with multiple substances, particularly nicotine and ecstasy, suggesting protective effects. Interestingly, Neuroticism had a modest positive link with nicotine and cannabis use. Alcohol use showed minimal association with personality traits.
+
+### Multicollinearity Analysis
+
+A multicollinearity analysis is visualized using pairwise correlations between all numeric variables in the dataset. A pairwise plot is used to demonstrate relationships between variables. Highly correlated variables can affect interpretability of regression models.
+
+```{r pairwisePanel, fig.width=10, fig.height=10, warning=FALSE}
+
+# Select all numeric columns
+numeric_vars <- df[, c("age", "gender", "education", "country", "ethnicity", 
+                       "nscore", "escore", "oscore", "ascore", "cscore", 
+                       "impuslive", "ss", "alcohol", "amphet", "amyl", "benzos", 
+                       "caff", "cannabis", "choc", "coke", "crack", "ecstasy", 
+                       "heroin", "ketamine", "legalh", "lsd", "meth", "mushrooms", 
+                       "nicotine")]
+
+# filter and refine lists by specific potential relationships
+
+# psychedelic usage and personality variables
+psych_personality_vars <- df[, c("nscore", "escore", "oscore", "ascore", "cscore", "lsd", "mushrooms")]
+
+
+# Generate pairwise panel plot
+pairs.panels(psych_personality_vars, 
+             method = "pearson",   # Correlation method (can be "spearman" or "kendall")
+             hist.col = "#00AFBB", # Histogram color
+             density = TRUE,       # Add density plot on diagonal
+             ellipses = TRUE,      # Confidence ellipses in scatterplots
+             lm = TRUE)            # Add regression lines to scatterplots
+
+```
+
+## Data Preparation
+
+Regression Assumptions (for residual analysis & interpretability) Even though ensemble models don’t strictly require them:
+
+-   Linearity & Homoscedasticity: Plot residuals vs. predictions
+
+-   Normality of errors: QQ-plots or Shapiro-Wilk test on residuals.
+
+-   Independence: Inspect for any time-series or other nested structure.
+
+### Create Derived Variables
+
+Multiple composite risk scores were derived to quantify drug use frequency or severity using additive, weighted, and dimensionality-reduced (PCA) approaches.
+
+#### Additive (Sum-Based) Risk Calculation
+
+The first approach calculates the sum of an individual's usage across the drug features (where a higher count indicates higher risk):
+
+```{r createRiskVar}
+# Create sum-based recency score (higher = more recent/frequent use)
+df$risk_score <- rowSums(df[drug_features], na.rm = TRUE)
+
+# view the first values
+head(df$risk_score)
+
+```
+
+#### Weighted Risk Calculation
+
+The second approach calculates risk using the severity of the drug to weigh risk:
+
+```{r createWeightedRisk}
+
+# Define weights
+weights <- c(
+  alcohol = 0.5,
+  cannabis = 1.0,
+  heroin = 3.0,
+  coke = 2.5,
+  lsd = 1.5,
+  ecstasy = 1.8,
+  meth = 2.2,
+  amphet = 2.0,
+  nicotine = 0.8
+)
+
+# filter for drug features with weights
+selected_drugs <- intersect(drug_features, names(weights))
+
+
+# multiply each feature column by its weight
+weighted_scores <- mapply(function(col, w) df[[col]] * w, selected_drugs, weights[selected_drugs])
+
+df$drug_composite_score <- rowSums(weighted_scores)
+
+head(df$drug_composite_score)
+```
+
+#### PCA-based Risk Calculation
+
+The third approach uses Principal Component Analysis to identify potential groupings for risk:
+
+```{r pca, warning=FALSE, message=FALSE}
+
+### adapted from https://bradleyboehmke.github.io/HOML/pca.html
+
+# Initialize H2O cluster (do this once per session)
+h2o.init()
+
+# Convert data to H2O Frame
+drug_data_h2o <- as.h2o(df[, drug_features])
+
+
+```
+
+```{r runPCA}
+
+# Run PCA - H2O handles missing values automatically
+pca_model <- h2o.prcomp(
+  training_frame = drug_data_h2o,
+  transform = "STANDARDIZE",   # Center and scale
+  k = length(drug_features),                       # Number of principal components to keep
+  impute_missing = TRUE       # Let H2O handle missing data
+)
+```
+
+```{r inspectPCA}
+
+# Get PCA scores (projections)
+pca_scores <- h2o.predict(pca_model, drug_data_h2o)
+
+# Convert scores back to R dataframe and assign first PC as `pca_risk`
+df$pca_risk <- as.data.frame(pca_scores)[, 1]
+
+# View summary and importance of components
+print(pca_model)
+print(head(df$pca_risk))
+
+```
+
+```{r riskScreePlot}
+# Extract importance matrix from pca_model
+importance <- pca_model@model$importance
+
+# Create a data frame for plotting
+scree_df <- data.frame(
+  PC = seq_along(importance[2, ]),
+  PVE = as.numeric(importance[2, ])
+)
+
+# Plot
+
+ggplot(scree_df, aes(x = PC, y = PVE, label = PC)) +
+  geom_point(color = "#00AFBB", size = 3) +
+  geom_line(group = 1, color = "#0072B2") +
+  geom_text(nudge_y = -0.002, size = 3) +
+  labs(title = "Scree Plot (H2O PCA)", x = "Principal Component", y = "Proportion of Variance Explained") +
+  theme_minimal()
+
+
+```
+
+```{r normalizeRisk}
+# scale by z-score for preprocessing
+df$z_weighted_risk <- scale(df$drug_composite_score)
+head(df$z_weighted_risk)
+
+```
+
+### Imputation for Missing Values
+
+```{r imputeMissingValues}
+
+### adapted from https://libguides.princeton.edu/R-Missingdata#:~:text=Imputation%20with%20Mean,-When%20dealing%20with&text=This%20method%2C%20known%20as%20%22mean,average%20for%20the%20missing%20entries.&text=Suitable%20for%20MCAR%3A%20Mean%20imputation,Completely%20At%20Random%20(MCAR).
+
+
+# Loop through each column and apply imputation to numeric ones
+for(i in seq_along(df)) {
+  if(is.numeric(df[[i]])) {
+    df[[i]][is.na(df[[i]])] <- median(df[[i]], na.rm = TRUE)
+  }
+}
+
+# Check that all missing values are filled
+sapply(df, function(x) sum(is.na(x)))
+
+
+
+```
+
+#### Compare Imputation to Original Data
+
+```{r createDensityPlots, fig.width=9, fig.height=9, warning=FALSE}
+
+# List of derived variables to exclude from the loop
+derived_vars <- c("risk_score", "weighted_risk", "drug_composite_score", "pca_risk", "z_weighted_risk")
+
+# Get numeric variable names
+numeric_vars <- colnames(prime_df)
+
+# Filter out derived variables
+valid_vars <- numeric_vars[!(numeric_vars %in% derived_vars)]
+
+# List to store plots
+plot_list <- list()
+
+# Loop through valid variables and create density plots
+for(var in valid_vars) {
+  # Check if the variable is numeric
+  if(is.numeric(prime_df[[var]])) {
+    p <- ggplot(prime_df, aes_string(x = var, fill = "\"Original\"")) +
+      geom_density(alpha = 0.5) +
+      geom_density(data = df, aes_string(x = var, fill = "\"Imputed\""), alpha = 0.5) +
+      labs(title = paste("Density Plot of", var, ": Original vs. Imputed")) +
+      scale_fill_manual(values = c("Original" = "blue", "Imputed" = "red"))
+    
+    # Store the plot in the list
+    plot_list[[var]] <- p
+  }
+}
+
+# Arrange all plots in a grid
+grid.arrange(grobs = plot_list, ncol = 3)  
+
+```
+
+### Normalization
+
+The data is scaled before running analyses like PCA. The caret package is used to subtract the mean of each variable and divide by the standard deviation. The result is a dataset where all numeric variables have a mean = 0 and standard deviation = 1. This is important because it allows for all variables to contribute equally before the PCA finds components based on patterns.
+
+```{r scaling}
+# preprocessing (scale data)
+pre_proc <- preProcess(personality_vars_df, method = c("center", "scale"))
+scaled_person_df <- predict(pre_proc, personality_vars_df)
+
+head(scaled_person_df)
+```
+
+Here, I've chosen to inspect the effects on Min-Max Normalization before modeling.
+
+```{r MinMaxnormalization}
+# Feature scaling (Min-Max normalization)
+scale_minmax <- function(x) {
+  return ((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)))
+}
+
+# Check for columns that are numeric, excluding "id"
+numeric_vars <- setdiff(names(df)[sapply(df, is.numeric)], "id")
+
+#numeric_cols <- sapply(df, is.numeric)  # Identify numeric columns
+df_scaled <- df
+df_scaled[, numeric_vars] <- lapply(df_scaled[, numeric_vars], scale_minmax)
+head(df_scaled)
+```
+
+## Modeling
+
+### Unsupervised Learning
+
+#### Principal Component Analysis
+
+```{r rerunPCA}
+
+# rerunning the PCA to feed ranked features to ensemble regression
+pca_model <- h2o.prcomp(
+  training_frame = drug_data_h2o,
+  transform = "STANDARDIZE",
+  k = length(drug_features),
+  use_all_factor_levels = TRUE,
+  impute_missing = TRUE
+)
+
+pca_components <- h2o.predict(pca_model, drug_data_h2o)
+
+# Convert to R dataframe
+pca_df <- as.data.frame(pca_components)
+```
+
+```{r nullCheck}
+# Bind PCA + target
+final_df <- cbind(pca_df, z_weighted_risk = df$z_weighted_risk)
+
+```
+
+### Supervised Learning
+
+#### Split Training and Test Data
+
+I will split the data with an 80/20 split for training and testing.
+
+```{r splitTrainTest}
+# Ensure the target variable is numeric
+final_df$z_weighted_risk <- as.numeric(final_df$z_weighted_risk)
+
+# Remove rows with missing values in the target or predictors
+final_df <- na.omit(final_df)
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Split the data into training+validation (90%) and test (10%)
+trainValIndex <- createDataPartition(final_df$z_weighted_risk, p = 0.9, list = FALSE)
+trainValData <- final_df[trainValIndex, ]
+testData <- final_df[-trainValIndex, ]
+
+# Split trainValData into training (80% of total) and validation (10% of total)
+trainIndex <- createDataPartition(trainValData$z_weighted_risk, p = 8/9, list = FALSE)
+trainData <- trainValData[trainIndex, ]
+valData <- trainValData[-trainIndex, ]
+
+```
+
+#### Train Ensemble Models
+
+I trained an ensemble (stacked model) with a Generalized Linear Model (GLM) meta-learner combining predictions from:
+
+-   Random Forest (`rf`)
+
+-   Gradient Boosting Machine (`gbm`)
+
+The ensemble assigned:
+
+-   96.7% weight to GBM
+
+-   3.3% weight to Random Forest
+
+This suggests GBM was far more predictive in this setup and dominates the ensemble's decision-making.
+
+##### Random Forest
+
+Random Forest is an ensemble method that applies bagging to a collection of homogeneous learners — specifically, decision trees — to reduce variance and improve model stability.
+
+```{r trainEnsembles, warning=FALSE, message=FALSE}
+# Define the training control for 10-fold CV
+train_control <- trainControl(method = "cv", number = 10, savePredictions = "all")
+
+# Train a Random Forest model using trainData
+rf_model <- train(
+  z_weighted_risk ~ ., 
+  data = trainData, 
+  method = "rf", 
+  trControl = train_control
+)
+
+# Predict on the validation set
+val_preds_rf <- predict(rf_model, newdata = valData)
+
+# Compute RMSE on the validation set
+val_rmse_rf <- sqrt(mean((val_preds_rf - valData$z_weighted_risk)^2))
+print(paste("Validation RMSE (Random Forest):", round(val_rmse_rf, 4)))
+
+```
+
+The low Root Mean Squared Error (RMSE) indicates fairly high model performance from the random forest. This suggest high accuracy for predicting risk of drug usage on the unseen validation data.
+
+##### Gradient Boosting
+
+```{r trainGBM}
+
+# GBM model on trainData
+gbm_model <- train(
+  z_weighted_risk ~ ., 
+  data = trainData, 
+  method = "gbm",
+  trControl = trainControl(method = "none"),
+  verbose = FALSE
+)
+
+# Predict on validation data
+val_preds <- predict(gbm_model, newdata = valData)
+
+# RMSE on validation
+gbm_val_rmse <- sqrt(mean((val_preds - valData$z_weighted_risk)^2))
+print(paste("Validation RMSE:", round(gbm_val_rmse, 4)))
+
+
+
+```
+
+The GBM ensemble has a fairly low RMSE for the validation data, however, the random forest performs slightly better.
+
+##### Stacked Ensemble
+
+The stacked ensemble trains the two base models, random forest and GBM. Then meta-learning is implemented to combine predictions to minimize error.
+
+```{r stackEnsemble}
+
+# Define training control
+train_control <- trainControl(
+  method = "cv", 
+  number = 10,
+  savePredictions = "final",  # needed for stacking
+  verboseIter = FALSE
+)
+
+# Train base models using caretList
+set.seed(123)
+base_models <- caretList(
+  z_weighted_risk ~ ., 
+  data = trainData,
+  trControl = train_control,
+  methodList = c("rf", "gbm") 
+)
+
+# Stack the models
+set.seed(123)
+ensemble_model <- caretStack(
+  base_models, 
+  method = "glm",  # meta-model
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+# View results
+summary(ensemble_model)
+
+```
+
+```{r StackedPredictions}
+
+# make predictions
+ensemble_preds <- predict(ensemble_model, newdata = valData)
+
+# Extract the predictions from the 'pred' column
+ensemble_preds <- ensemble_preds$pred
+
+# Ensure the target variable 'z_weighted_risk' is numeric
+valData$z_weighted_risk <- as.numeric(as.character(valData$z_weighted_risk))
+
+# Calculate RMSE
+ensemble_rmse <- sqrt(mean((ensemble_preds - valData$z_weighted_risk)^2))
+
+# stacked
+print(paste("Ensemble RMSE:", round(ensemble_rmse, 4)))
+# gbm
+print(paste("Validation RMSE (GBM):", round(gbm_val_rmse, 4)))
+#rf
+print(paste("Validation RMSE (Random Forest):", round(val_rmse_rf, 4)))
+
+```
+
+The ensemble model, combining Random Forest (RF) and Gradient Boosting Machine (GBM), achieved a validation RMSE of 0.1368, which is lower than the individual performance of both models.This suggests that the ensemble model, which leverages the strengths of both RF and GBM, outperforms each model on its own, providing better predictive accuracy as indicated by the lower RMSE.
+
+The summary of the stacked ensemble shows that GBM model has a much higher importance than random forest.
+
+## Evaluation
+
+### Test Data Predictions
+
+Next, I make predictions using the test data.
+
+```{r evaluatePred}
+# Make predictions using the ensemble model
+predictions <- predict(ensemble_model, newdata = testData)
+
+# Evaluate model performance (e.g., using RMSE, R-squared)
+postResample(predictions, testData$z_weighted_risk)
+
+```
+
+-   The **Root Mean Squared Error (RMSE)** is fairly low at 0.1025, indicating higher accuracy.
+-   The **R-squared** is quite high at 0.9908, meaning that nearly all of the variance in the target variable is explained by the model.
+-   The **Mean Absolute Error** is low at 0.0687, meaning that there is a small but acceptable amount of error in the predictions.
+
+### Actual vs. Predicted
+
+```{r residuals}
+# Ensure predictions are a numeric vector (if they are not already)
+predictions_numeric <- as.numeric(predictions$pred)  # or adjust if `predictions` is a data.table
+
+# Calculate residuals
+residuals <- testData$z_weighted_risk - predictions_numeric
+
+# Plot residuals
+plot(predictions_numeric, residuals, 
+     main="Residual Plot", 
+     xlab="Predicted Values", 
+     ylab="Residuals")
+abline(h=0, col="red")  # Add a horizontal line at 0 for reference
+
+
+```
+
+The residuals are the differences between predicted and actual values. A QQ plot of the residuals is generated to assess if the differences are normally distributed, which is preferred in a well-performing model. The QQ plot seems to confirm that residuals are normally distributed.
+
+```{r QQPlot}
+# Calculate residuals
+residuals <- testData$z_weighted_risk - predictions_numeric
+
+# Now, plot the QQ plot
+qqnorm(residuals, main = "QQ Plot of Residuals")
+qqline(residuals, col = "red", lwd = 2)  # Red line for normality reference
+
+```
+
+## Deployment
+
+This program should be carefully evaluated for bias and ethical considerations, particularly those related to demographic, socioeconomic, or clinical factors, before deployment.
+
+If validated, this model may be deployed as a decision-support tool for healthcare institutions aiming to proactively identify individuals at risk of severe drug use. The model's outputs could assist clinicians, case managers, or public health officials in tailoring early interventions, allocating resources, or prioritizing care.
+
+### Opportunities for Improvement
+
+-   **Validate Assumptions**: The current model uses the recency or severity of drug usage as an indicator of risk. A literature and real-world informed method for encoding risk of drug usage should be refined.
+-   **Expand Training Data**: Incorporating more diverse and recent datasets—especially those reflecting underrepresented populations considering the skews present in the data—could improve generalizability and reduce bias.
+-   **Model Tuning**: Hyperparameter optimization and testing alternative model architectures (e.g., ensemble methods, neural networks) may yield better performance.
+-   **Evaluating Bias**: Models that can handle protected class status for reducing biases may be helpful for improvement; such as the fairlearn in Python.
