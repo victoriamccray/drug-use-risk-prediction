@@ -76,8 +76,7 @@ rmarkdown::render("analysis/PredictingDrugUseEnsemble.Rmd")
 - **Self-reported data**: Social desirability bias
 - **Cross-sectional**: Cannot infer causation
 - **Severity weights**: Literature-based, not clinically validated
-
-* **Not validated for clinical use** - requires IRB approval, prospective validation, and bias auditing
+- **Not validated for clinical use** - requires IRB approval, prospective validation, and bias auditing
 
 ## Future Work
 
