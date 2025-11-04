@@ -1,6 +1,6 @@
 # Substance Use Risk Prediction
 
-Ensemble regression model predicting drug use risk from personality traits and behavioral factors.
+Ensemble regression model predicting drug use risk from personality traits and self-reported behavioral factors.
 
 
 [![R](https://img.shields.io/badge/R-4.0+-blue.svg)](https://www.r-project.org/)
